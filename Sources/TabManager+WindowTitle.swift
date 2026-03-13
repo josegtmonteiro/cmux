@@ -64,9 +64,19 @@ extension TabManager {
 
     private func defaultWindowTitle(for tab: Workspace?) -> String {
         guard let tab else { return "cmux" }
+        var base: String
         let trimmedTitle = resolvedWorkspaceDisplayTitle(for: tab).trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmedTitle.isEmpty { return trimmedTitle }
-        let trimmedDirectory = tab.currentDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmedDirectory.isEmpty ? "cmux" : trimmedDirectory
+        if !trimmedTitle.isEmpty {
+            base = trimmedTitle
+        } else {
+            let trimmedDirectory = tab.currentDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+            base = trimmedDirectory.isEmpty ? "cmux" : trimmedDirectory
+        }
+        // Custom fork feature: append the shell-reported foreground process
+        // (e.g. "claude myproject abc-123") for the focused panel.
+        if let fgProcess = tab.focusedForegroundProcess {
+            base += " — " + fgProcess
+        }
+        return base
     }
 }
