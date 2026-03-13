@@ -2738,6 +2738,24 @@ final class Workspace: Identifiable, ObservableObject, FilePreviewTabMetadataHos
     /// Ordinal for CMUX_PORT range assignment (monotonically increasing per app session)
     var portOrdinal: Int = 0
 
+    /// Foreground process info reported by shell integration (e.g. "vim myproject" or "claude myproject abc-123").
+    /// Stored per-panel so split panes can track independent processes.
+    var foregroundProcessByPanel: [UUID: String] = [:]
+
+    func updateForegroundProcess(panelId: UUID, info: String) {
+        foregroundProcessByPanel[panelId] = info
+    }
+
+    func clearForegroundProcess(panelId: UUID) {
+        foregroundProcessByPanel.removeValue(forKey: panelId)
+    }
+
+    /// Returns the foreground process info for the currently focused panel, if any.
+    var focusedForegroundProcess: String? {
+        guard let focused = focusedPanelId else { return nil }
+        return foregroundProcessByPanel[focused]
+    }
+
     /// The bonsplit controller managing the split panes for this workspace
     let bonsplitController: BonsplitController
     /// Process/window composition capability registry shared with every pane target.

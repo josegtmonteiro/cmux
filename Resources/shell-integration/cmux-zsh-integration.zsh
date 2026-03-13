@@ -486,6 +486,7 @@ typeset -g _CMUX_CMD_START=0
 typeset -g _CMUX_SHELL_ACTIVITY_LAST=""
 typeset -g _CMUX_TTY_NAME=""
 typeset -g _CMUX_TTY_REPORTED=0
+typeset -g _CMUX_CLAUDE_WATCH_PID=""
 typeset -g _CMUX_TMUX_PUSH_SIGNATURE=""
 typeset -g _CMUX_TMUX_PULL_SIGNATURE=""
 typeset -g _CMUX_DELAY_TERM_RESTORE_UNTIL_FIRST_PROMPT=${_CMUX_DELAY_TERM_RESTORE_UNTIL_FIRST_PROMPT:-0}
@@ -1669,6 +1670,57 @@ _cmux_command_starts_nested_shell() {
     return 1
 }
 
+_cmux_stop_claude_watch() {
+    if [[ -n "$_CMUX_CLAUDE_WATCH_PID" ]]; then
+        kill "$_CMUX_CLAUDE_WATCH_PID" >/dev/null 2>&1 || true
+        _CMUX_CLAUDE_WATCH_PID=""
+    fi
+}
+
+_cmux_report_foreground() {
+    # Report the foreground process name + cwd to the app for window title.
+    local process_name="$1"
+    local folder_name="$2"
+    [[ -S "$CMUX_SOCKET_PATH" && -n "$CMUX_TAB_ID" && -n "$CMUX_PANEL_ID" ]] || return 0
+    _cmux_send "report_foreground_process ${process_name} ${folder_name} --tab=$CMUX_TAB_ID --panel=$CMUX_PANEL_ID"
+}
+
+_cmux_watch_claude_session() {
+    local folder_name="$1"
+    local tty_name="$2"
+    local tab_id="$3"
+    local panel_id="$4"
+    local log_file="${TMPDIR:-/tmp}/cmux-claude-watch.log"
+    local attempt=0
+    local max_attempts=10
+
+    echo "[$(date '+%H:%M:%S')] watcher started: folder=$folder_name tty=$tty_name tab=$tab_id panel=$panel_id" >> "$log_file"
+
+    while (( attempt < max_attempts )); do
+        sleep 0.5
+        attempt=$(( attempt + 1 ))
+
+        # Find claude process on this TTY and extract --session-id
+        local session_id=""
+        session_id="$(
+            /bin/ps -t "$tty_name" -o args= 2>/dev/null \
+            | grep -E '(^|/)claude ' \
+            | grep -o -- '--session-id [^ ]*' \
+            | head -1 \
+            | awk '{print $2}'
+        )"
+
+        echo "[$(date '+%H:%M:%S')] attempt=$attempt session_id=$session_id" >> "$log_file"
+
+        if [[ -n "$session_id" ]]; then
+            # Update with session ID appended: "claude folder session-id"
+            _cmux_send "report_foreground_process claude ${folder_name} ${session_id} --tab=$tab_id --panel=$panel_id"
+            echo "[$(date '+%H:%M:%S')] sent: report_foreground_process claude $folder_name $session_id" >> "$log_file"
+            return 0
+        fi
+    done
+}
+
 _cmux_preexec() {
     local cmd="${1## }"
     _cmux_halt_pr_poll_loop
@@ -1699,6 +1751,39 @@ _cmux_preexec() {
             _CMUX_PR_FORCE=1 ;;
     esac
 
+    # Report foreground process + cwd for window title enrichment.
+    local process_name="${cmd%% *}"    # first word of the command
+    process_name="${process_name##*/}" # strip path if e.g. /usr/bin/vim
+    local folder="${PWD##*/}"
+    [[ -z "$folder" ]] && folder="/"
+
+    if [[ -n "$process_name" ]]; then
+        {
+            _cmux_report_foreground "$process_name" "$folder"
+        } >/dev/null 2>&1 &!
+    fi
+
+    # For claude specifically, also spawn a watcher to extract the session ID.
+    case "$cmd" in
+        claude|claude\ *)
+            _cmux_stop_claude_watch
+            local tty_for_watch="${_CMUX_TTY_NAME}"
+            if [[ -z "$tty_for_watch" ]]; then
+                local t
+                t="$(tty 2>/dev/null || true)"
+                t="${t##*/}"
+                tty_for_watch="$t"
+            fi
+            if [[ -n "$tty_for_watch" && "$tty_for_watch" != "not a tty" \
+                && -n "$CMUX_TAB_ID" && -n "$CMUX_PANEL_ID" && -S "$CMUX_SOCKET_PATH" ]]; then
+                {
+                    _cmux_watch_claude_session "$folder" "$tty_for_watch" "$CMUX_TAB_ID" "$CMUX_PANEL_ID"
+                } >/dev/null 2>&1 &!
+                _CMUX_CLAUDE_WATCH_PID=$!
+            fi
+            ;;
+    esac
+
     # Register TTY + kick batched port scan for foreground commands (servers).
     _cmux_report_tty_once
     _cmux_ports_kick command
@@ -1715,6 +1800,14 @@ _cmux_precmd() {
     _cmux_patch_ghostty_job_table_guard
     _cmux_stop_git_head_watch
     _cmux_zsh_job_table_saturated && return 0
+
+    # Clear foreground process info when returning to prompt (command exited).
+    _cmux_stop_claude_watch
+    if [[ -S "$CMUX_SOCKET_PATH" && -n "$CMUX_TAB_ID" && -n "$CMUX_PANEL_ID" ]]; then
+        {
+            _cmux_send "clear_foreground_process --tab=$CMUX_TAB_ID --panel=$CMUX_PANEL_ID"
+        } >/dev/null 2>&1 &!
+    fi
 
     _cmux_normalize_claude_config_dir
     if (( _CMUX_DELAY_TERM_RESTORE_UNTIL_FIRST_PROMPT )); then
@@ -1935,6 +2028,7 @@ _cmux_restore_terminal_identity_after_startup() {
 _cmux_zshexit() {
     _cmux_stop_git_head_watch
     _cmux_stop_pr_poll_loop
+    _cmux_stop_claude_watch
     [[ -n "${_CMUX_GIT_ACTIVE_PWD_FILE:-}" ]] && /bin/rm -f -- "$_CMUX_GIT_ACTIVE_PWD_FILE" >/dev/null 2>&1 || true
 }
 

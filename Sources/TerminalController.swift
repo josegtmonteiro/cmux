@@ -898,6 +898,48 @@ class TerminalController {
         return (workspaceId, panelId)
     }
 
+    private func reportForegroundProcess(_ args: String) -> String {
+        let parsed = parseOptions(args)
+        // Positional args: <process> <folder> [extra...], e.g. "claude myproject abc-123"
+        let info = parsed.positional.joined(separator: " ")
+        guard !info.isEmpty else {
+            return "ERROR: Missing process info — usage: report_foreground_process <process> <folder> [extra] --tab=X --panel=Y"
+        }
+
+        if let scope = Self.explicitSocketScope(options: parsed.options) {
+            DispatchQueue.main.async {
+                guard let tabManager = AppDelegate.shared?.tabManagerFor(tabId: scope.workspaceId),
+                      let tab = tabManager.tabs.first(where: { $0.id == scope.workspaceId }) else {
+                    return
+                }
+                tab.updateForegroundProcess(panelId: scope.panelId, info: info)
+                if tabManager.selectedTabId == scope.workspaceId {
+                    tabManager.updateWindowTitleForSelectedTab()
+                }
+            }
+            return "OK"
+        }
+        return "ERROR: Missing --tab and --panel options"
+    }
+
+    private func clearForegroundProcess(_ args: String) -> String {
+        let parsed = parseOptions(args)
+        if let scope = Self.explicitSocketScope(options: parsed.options) {
+            DispatchQueue.main.async {
+                guard let tabManager = AppDelegate.shared?.tabManagerFor(tabId: scope.workspaceId),
+                      let tab = tabManager.tabs.first(where: { $0.id == scope.workspaceId }) else {
+                    return
+                }
+                tab.clearForegroundProcess(panelId: scope.panelId)
+                if tabManager.selectedTabId == scope.workspaceId {
+                    tabManager.updateWindowTitleForSelectedTab()
+                }
+            }
+            return "OK"
+        }
+        return "ERROR: Missing --tab and --panel options"
+    }
+
     nonisolated static func normalizeReportedDirectory(_ directory: String) -> String {
         let trimmed = directory.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return directory }
@@ -2653,6 +2695,12 @@ class TerminalController {
 
         case "simulate_app_active":
             return simulateAppDidBecomeActive()
+
+        case "report_foreground_process":
+            return reportForegroundProcess(args)
+
+        case "clear_foreground_process":
+            return clearForegroundProcess(args)
 
         // Sidebar metadata/reporting commands (set_status/report_meta/
         // report_meta_block/clear_status/clear_meta/clear_meta_block/list_status/
