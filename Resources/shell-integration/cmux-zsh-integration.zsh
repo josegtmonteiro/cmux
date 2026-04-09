@@ -652,6 +652,8 @@ typeset -g _CMUX_SHELL_ACTIVITY_LAST=""
 typeset -g _CMUX_TTY_NAME=""
 typeset -g _CMUX_TTY_REPORTED=0
 typeset -g _CMUX_CLAUDE_WATCH_PID=""
+typeset -g _CMUX_LAST_CMD_WAS_CLAUDE=0
+typeset -g _CMUX_CLAUDE_SESSION_FILE=""
 typeset -g _CMUX_TMUX_PUSH_SIGNATURE=""
 typeset -g _CMUX_TMUX_PULL_SIGNATURE=""
 typeset -g _CMUX_DELAY_TERM_RESTORE_UNTIL_FIRST_PROMPT=${_CMUX_DELAY_TERM_RESTORE_UNTIL_FIRST_PROMPT:-0}
@@ -2122,11 +2124,12 @@ _cmux_watch_claude_session() {
     local tty_name="$2"
     local tab_id="$3"
     local panel_id="$4"
+    local session_file="$5"
     local log_file="${TMPDIR:-/tmp}/cmux-claude-watch.log"
     local attempt=0
     local max_attempts=10
 
-    echo "[$(date '+%H:%M:%S')] watcher started: folder=$folder_name tty=$tty_name tab=$tab_id panel=$panel_id" >> "$log_file"
+    echo "[$(date '+%H:%M:%S')] watcher started: folder=$folder_name tty=$tty_name tab=$tab_id panel=$panel_id file=$session_file" >> "$log_file"
 
     while (( attempt < max_attempts )); do
         sleep 0.5
@@ -2148,6 +2151,11 @@ _cmux_watch_claude_session() {
             # Update with session ID appended: "claude folder session-id"
             _cmux_send "report_foreground_process claude ${folder_name} ${session_id} --tab=$tab_id --panel=$panel_id"
             echo "[$(date '+%H:%M:%S')] sent: report_foreground_process claude $folder_name $session_id" >> "$log_file"
+            # Stash the session id so _cmux_precmd can push
+            # `claude --resume <id>` into shell history once claude exits.
+            if [[ -n "$session_file" ]]; then
+                printf '%s\n' "$session_id" > "$session_file" 2>/dev/null || true
+            fi
             return 0
         fi
     done
@@ -2197,8 +2205,10 @@ _cmux_preexec() {
     fi
 
     # For claude specifically, also spawn a watcher to extract the session ID.
+    _CMUX_LAST_CMD_WAS_CLAUDE=0
     case "$cmd" in
         claude|claude\ *)
+            _CMUX_LAST_CMD_WAS_CLAUDE=1
             _cmux_stop_claude_watch
             local tty_for_watch="${_CMUX_TTY_NAME}"
             if [[ -z "$tty_for_watch" ]]; then
@@ -2207,10 +2217,14 @@ _cmux_preexec() {
                 t="${t##*/}"
                 tty_for_watch="$t"
             fi
+            # Per-panel session id stash so _cmux_precmd can push
+            # `claude --resume <id>` into history after claude exits.
+            _CMUX_CLAUDE_SESSION_FILE="${TMPDIR:-/tmp}/cmux-claude-session-${CMUX_PANEL_ID:-default}"
+            rm -f "$_CMUX_CLAUDE_SESSION_FILE" 2>/dev/null || true
             if [[ -n "$tty_for_watch" && "$tty_for_watch" != "not a tty" \
                 && -n "$CMUX_TAB_ID" && -n "$CMUX_PANEL_ID" && -S "$CMUX_SOCKET_PATH" ]]; then
                 {
-                    _cmux_watch_claude_session "$folder" "$tty_for_watch" "$CMUX_TAB_ID" "$CMUX_PANEL_ID"
+                    _cmux_watch_claude_session "$folder" "$tty_for_watch" "$CMUX_TAB_ID" "$CMUX_PANEL_ID" "$_CMUX_CLAUDE_SESSION_FILE"
                 } >/dev/null 2>&1 &!
                 _CMUX_CLAUDE_WATCH_PID=$!
             fi
@@ -2272,6 +2286,19 @@ _cmux_precmd() {
     _cmux_patch_ghostty_job_table_guard
     _cmux_stop_git_head_watch
     _cmux_zsh_job_table_saturated && return 0
+
+    # If the command that just finished was `claude ...` and the watcher
+    # managed to capture a session id, push `claude --resume <id>` into this
+    # shell's history so the user can ↑ to resume the same session.
+    if (( _CMUX_LAST_CMD_WAS_CLAUDE )) && [[ -n "$_CMUX_CLAUDE_SESSION_FILE" && -r "$_CMUX_CLAUDE_SESSION_FILE" ]]; then
+        local _cmux_last_session
+        _cmux_last_session="$(< "$_CMUX_CLAUDE_SESSION_FILE")"
+        _cmux_last_session="${_cmux_last_session%$'\n'}"
+        if [[ -n "$_cmux_last_session" ]]; then
+            print -s "claude --resume $_cmux_last_session"
+        fi
+    fi
+    _CMUX_LAST_CMD_WAS_CLAUDE=0
 
     # Clear foreground process info when returning to prompt (command exited).
     _cmux_stop_claude_watch

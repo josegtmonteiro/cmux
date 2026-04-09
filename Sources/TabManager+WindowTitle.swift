@@ -131,6 +131,12 @@ extension TabManager {
         // (e.g. "claude myproject abc-123") for the focused panel.
         if let fgProcess = tab.focusedForegroundProcess {
             base += " — " + fgProcess
+        } else if let lastSession = tab.focusedLastClaudeSession {
+            // No live foreground process — surface the last claude session as
+            // a resume hint. Use the first 8 chars of the session id to keep
+            // the title compact.
+            let shortId = String(lastSession.prefix(8))
+            base += " — ↩ claude " + shortId
         }
         return base
     }
