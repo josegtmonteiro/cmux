@@ -7,9 +7,9 @@ source "$SCRIPT_DIR/lib/mobile-attach.sh"
 # shellcheck source=scripts/lib/dev-secrets.sh
 source "$SCRIPT_DIR/lib/dev-secrets.sh"
 
-APP_NAME="cmux DEV"
-BUNDLE_ID="com.cmuxterm.app.debug"
-BASE_APP_NAME="cmux DEV"
+APP_NAME="claude code DEV"
+BUNDLE_ID="com.claudecode.app.debug"
+BASE_APP_NAME="claude code DEV"
 DERIVED_DATA=""
 NAME_SET=0
 BUNDLE_SET=0
