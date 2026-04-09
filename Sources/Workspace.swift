@@ -2741,19 +2741,43 @@ final class Workspace: Identifiable, ObservableObject, FilePreviewTabMetadataHos
     /// Foreground process info reported by shell integration (e.g. "vim myproject" or "claude myproject abc-123").
     /// Stored per-panel so split panes can track independent processes.
     var foregroundProcessByPanel: [UUID: String] = [:]
+    /// Last known claude --session-id per panel. Preserved across
+    /// `clearForegroundProcess` so it can be surfaced as a hint for
+    /// `claude --resume <id>` after the process exits.
+    var lastClaudeSessionByPanel: [UUID: String] = [:]
 
     func updateForegroundProcess(panelId: UUID, info: String) {
         foregroundProcessByPanel[panelId] = info
+        // If this looks like "claude <folder> <session-id>", remember the
+        // session id so it can survive `clearForegroundProcess` and be
+        // surfaced as a resume hint later.
+        let parts = info.split(separator: " ", omittingEmptySubsequences: true)
+        if parts.count >= 3, parts[0] == "claude" {
+            let candidate = String(parts[2])
+            if !candidate.isEmpty {
+                lastClaudeSessionByPanel[panelId] = candidate
+            }
+        }
     }
 
     func clearForegroundProcess(panelId: UUID) {
         foregroundProcessByPanel.removeValue(forKey: panelId)
+        // Intentionally keep lastClaudeSessionByPanel so the title can still
+        // show the resume hint after claude exits.
     }
 
     /// Returns the foreground process info for the currently focused panel, if any.
     var focusedForegroundProcess: String? {
         guard let focused = focusedPanelId else { return nil }
         return foregroundProcessByPanel[focused]
+    }
+
+    /// Returns the last-known claude session id for the currently focused
+    /// panel, if any. Used to show a `↩ claude <id>` hint in the window title
+    /// so the user can resume the previous session.
+    var focusedLastClaudeSession: String? {
+        guard let focused = focusedPanelId else { return nil }
+        return lastClaudeSessionByPanel[focused]
     }
 
     /// The bonsplit controller managing the split panes for this workspace
