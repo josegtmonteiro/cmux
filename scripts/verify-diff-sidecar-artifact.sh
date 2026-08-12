@@ -61,7 +61,12 @@ for arch in $ARCHS; do
   fi
 done
 
-DEBUG_INFO="$(dwarfdump --debug-info "$BINARY" 2>&1)"
+# Resolve Apple's dwarfdump explicitly. build-diff-sidecar.sh prepends
+# /opt/homebrew/bin to PATH, where a Homebrew libdwarf `dwarfdump` can shadow
+# the Xcode one; that build does not accept `--debug-info` and fails the check.
+DWARFDUMP="$(xcrun -f dwarfdump 2>/dev/null || true)"
+[[ -x "$DWARFDUMP" ]] || DWARFDUMP=/usr/bin/dwarfdump
+DEBUG_INFO="$("$DWARFDUMP" --debug-info "$BINARY" 2>&1)"
 if [[ "$DEBUG_INFO" == *"DW_TAG_"* ]]; then
   echo "error: diff sidecar retains embedded DWARF debug information" >&2
   exit 1
