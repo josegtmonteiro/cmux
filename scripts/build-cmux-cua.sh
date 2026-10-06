@@ -375,9 +375,17 @@ for arch in "${ARCHS[@]}"; do
   # by source dir prevents cross-revision reuse. Concurrent builds of one
   # revision serialize on Cargo's own lock.
   target_dir="$SRC_ROOT/.cmux-cargo-target"
+  # Apply Xcode's macOS minimum to target artifacts only. A global
+  # MACOSX_DEPLOYMENT_TARGET also reaches host proc-macro dylibs, which rustc
+  # then fails to load on macOS 27 hosts (E0463 "can't find crate").
+  target_rustflags=()
+  if [[ -n "${MACOSX_DEPLOYMENT_TARGET:-}" ]]; then
+    target_rustflags=("CARGO_TARGET_$(echo "$target" | tr '[:lower:]-' '[:upper:]_')_RUSTFLAGS=-C link-arg=-mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}")
+  fi
   cargo_status=0
   for cargo_attempt in 1 2 3; do
-    if CARGO_TARGET_DIR="$target_dir" \
+    if env -u MACOSX_DEPLOYMENT_TARGET ${target_rustflags[@]+"${target_rustflags[@]}"} \
+      CARGO_TARGET_DIR="$target_dir" \
       CARGO_NET_RETRY="${CARGO_NET_RETRY:-5}" \
       CARGO_HTTP_MULTIPLEXING="${CARGO_HTTP_MULTIPLEXING:-false}" \
       cargo build --manifest-path "$CARGO_ROOT/Cargo.toml" --locked -p cmux-cua --release --target "$target"; then
