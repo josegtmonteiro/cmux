@@ -62,8 +62,13 @@ for arch in $requested_archs; do
   seen_targets="$seen_targets $target"
   ensure_rust_target "$target"
   target_dir="${BUILD_WORK_DIR}/${target}"
-  CARGO_TARGET_DIR="$target_dir" \
-    MACOSX_DEPLOYMENT_TARGET="${CMUX_DIFF_SIDECAR_MIN_MACOS:-14.0}" \
+  # Apply the macOS minimum to target artifacts only. A global
+  # MACOSX_DEPLOYMENT_TARGET also reaches host proc-macro dylibs, which rustc
+  # then fails to load on macOS 27 hosts (E0463 "can't find crate").
+  target_rustflags_var="CARGO_TARGET_$(echo "$target" | tr '[:lower:]-' '[:upper:]_')_RUSTFLAGS"
+  env -u MACOSX_DEPLOYMENT_TARGET \
+    CARGO_TARGET_DIR="$target_dir" \
+    "$target_rustflags_var=-C link-arg=-mmacosx-version-min=${CMUX_DIFF_SIDECAR_MIN_MACOS:-14.0}" \
     "$CARGO_RUNNER" build \
       --manifest-path "${CRATE_DIR}/Cargo.toml" \
       --bin "$BINARY_NAME" \
