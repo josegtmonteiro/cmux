@@ -10,11 +10,11 @@ public struct V2SystemKeychainAccess: V2KeychainAccess, Sendable {
 
     /// Creates the system keychain adapter.
     public init() {
-        #if os(macOS)
-        supportsLegacyFileKeychain = true
-        #else
+        // Custom fork: this build is ad-hoc signed without keychain entitlements,
+        // so the Data Protection Keychain is unavailable (errSecMissingEntitlement)
+        // and every v2 persistence attempt fails. Keep the macOS file keychain as
+        // the only domain, like iOS keeps a single domain, so no migration runs.
         supportsLegacyFileKeychain = false
-        #endif
     }
 
     /// Reads the exact marker metadata without changing item identity fields.
@@ -24,6 +24,11 @@ public struct V2SystemKeychainAccess: V2KeychainAccess, Sendable {
         accessGroup: String?,
         dataProtection: Bool
     ) throws -> Bool {
+        #if os(macOS)
+        // Custom fork: single domain, nothing to migrate. Skipping the marker
+        // avoids rewriting attributes on items owned by a previous ad-hoc build.
+        return true
+        #else
         var query = baseQuery(
             service: service,
             account: account,
@@ -39,6 +44,7 @@ public struct V2SystemKeychainAccess: V2KeychainAccess, Sendable {
             throw V2KeychainAccessError.status(status)
         }
         return attributes[kSecAttrComment] as? String == Self.migrationMarker
+        #endif
     }
 
     /// Updates only the fixed marker metadata on an existing primary item.
@@ -48,6 +54,9 @@ public struct V2SystemKeychainAccess: V2KeychainAccess, Sendable {
         accessGroup: String?,
         dataProtection: Bool
     ) throws {
+        #if os(macOS)
+        // Custom fork: see hasMigrationMarker.
+        #else
         let status = SecItemUpdate(
             baseQuery(
                 service: service,
@@ -58,6 +67,7 @@ public struct V2SystemKeychainAccess: V2KeychainAccess, Sendable {
             [kSecAttrComment as String: Self.migrationMarker] as CFDictionary
         )
         guard status == errSecSuccess else { throw V2KeychainAccessError.status(status) }
+        #endif
     }
 
     /// Reads an exact generic-password item from the selected keychain domain.
@@ -137,8 +147,14 @@ public struct V2SystemKeychainAccess: V2KeychainAccess, Sendable {
             kSecAttrAccount as String: account,
             // Endpoint seeds and installation IDs must never be iCloud-synced.
             kSecAttrSynchronizable as String: false,
-            kSecUseDataProtectionKeychain as String: dataProtection,
         ]
+        #if os(macOS)
+        // Custom fork: always the file keychain (see init).
+        _ = dataProtection
+        query[kSecUseDataProtectionKeychain as String] = false
+        #else
+        query[kSecUseDataProtectionKeychain as String] = dataProtection
+        #endif
         if let accessGroup { query[kSecAttrAccessGroup as String] = accessGroup }
         return query
     }
