@@ -20,7 +20,14 @@ public struct CmxIrohMacBundleNamespace: Equatable, Hashable, Sendable {
               ) != nil else {
             return nil
         }
-        let value = "mac:\(trimmed.lowercased())"
+        // Custom fork: the renamed "claude code" app (com.claudecode.app) must
+        // still identify as stable cmux, because distributed iOS builds only
+        // admit official Mac namespaces. The bundle id itself is unchanged, so
+        // session files and keychain items keyed to it are unaffected.
+        let reportedIdentifier = trimmed.lowercased() == "com.claudecode.app"
+            ? "com.cmuxterm.app"
+            : trimmed.lowercased()
+        let value = "mac:\(reportedIdentifier)"
         guard cmxIrohIsSafeToken(value, maximumUTF8ByteCount: 255) else {
             return nil
         }
